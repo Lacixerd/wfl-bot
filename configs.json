@@ -1,0 +1,36 @@
+{
+    "joinleave": {
+        "channel": "join-leave",
+        "role": "member",
+        "guilds": {
+            "1368125128868630529": {
+                "channel_id": 1368135567534981140,
+                "channel_name": "joins"
+            }
+        }
+    },
+    "modlog": {
+        "guilds": {
+            "1368125128868630529": {
+                "channel_id": 1368473040379449384,
+                "channel_name": "modlog"
+            }
+        }
+    },
+    "warnings": {
+        "1368125128868630529": {
+            "619495823830679552": [
+                {
+                    "id": "1368125128868630529-619495823830679552-1746340304",
+                    "user_id": 619495823830679552,
+                    "user_name": "zawe.",
+                    "guild_id": 1368125128868630529,
+                    "moderator_id": 869295904543346749,
+                    "moderator_name": "at0minoda_destroyer",
+                    "reason": "For becoming UOC",
+                    "timestamp": 1746340304
+                }
+            ]
+        }
+    }
+}
