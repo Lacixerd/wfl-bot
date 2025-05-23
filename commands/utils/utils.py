@@ -6,13 +6,38 @@ import time
 import asyncio
 import math
 import random
+import json
+import os
 
 class Utils(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.start_time = datetime.datetime.utcnow()
         self.afk_users = {}
+        self.images_file = 'wflpraiseimages/images.json'
     
+    async def load_images(self):
+        """Load images from the JSON file"""
+        try:
+            if not os.path.exists(self.images_file):
+                return {"gifs": []}
+            with open(self.images_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading images: {e}")
+            return {"gifs": []}
+            
+    async def save_images(self, data):
+        """Save images to the JSON file"""
+        try:
+            os.makedirs(os.path.dirname(self.images_file), exist_ok=True)
+            with open(self.images_file, 'w') as f:
+                json.dump(data, f, indent=4)
+            return True
+        except Exception as e:
+            print(f"Error saving images: {e}")
+            return False
+
     @app_commands.command(name="userinfo", description="Shows information about a user")
     async def userinfo(self, interaction: discord.Interaction, user: discord.Member = None):
         user = user or interaction.user
@@ -436,7 +461,7 @@ class Utils(commands.Cog):
         embed.add_field(name="Started At", value=f"<t:{int(self.start_time.timestamp())}:F>", inline=False)
         
         # Add bot version and other optional details
-        embed.add_field(name="Bot Version", value="1.0.0", inline=True)
+        embed.add_field(name="Bot Version", value="1.2.0", inline=True)
         embed.add_field(name="Discord.py Version", value=discord.__version__, inline=True)
         
         await interaction.response.send_message(embed=embed)
@@ -521,6 +546,329 @@ class Utils(commands.Cog):
                     f"{message.author.mention}, {user.mention} is AFK: {user_data['reason']} - {duration} ago",
                     delete_after=10
                 )
+
+    @app_commands.command(name="wafflepraise", description="Special gifs and images for waffle lovers!")
+    async def wafflepraise(self, interaction: discord.Interaction):
+        """Sends a random waffle gif or image"""
+        # Load images from JSON
+        data = await self.load_images()
+        if not data["gifs"]:
+            return await interaction.response.send_message("No waffle gifs available!", ephemeral=True)
+            
+        await interaction.response.send_message(random.choice(data["gifs"]))
+
+    @app_commands.command(name="addwafflegifs", description="Add new waffle gifs to the collection")
+    @app_commands.default_permissions(administrator=True)
+    async def addwafflegifs(self, interaction: discord.Interaction, urls: str):
+        """
+        Add new waffle gifs to the collection
+        
+        Parameters
+        -----------
+        urls: Space-separated URLs of gifs/images to add
+        """
+        # Check if user is administrator
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("You need Administrator permission to use this command!", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Load current images
+            data = await self.load_images()
+            
+            # Split URLs and remove empty strings
+            new_urls = [url.strip() for url in urls.split() if url.strip()]
+            
+            if not new_urls:
+                return await interaction.followup.send("No valid URLs provided!", ephemeral=True)
+                
+            # Add new URLs
+            added_urls = []
+            skipped_urls = []
+            
+            for url in new_urls:
+                if url not in data["gifs"]:
+                    data["gifs"].append(url)
+                    added_urls.append(url)
+                else:
+                    skipped_urls.append(url)
+                    
+            # Save updated data only if we added new URLs
+            if added_urls:
+                success = await self.save_images(data)
+                if not success:
+                    return await interaction.followup.send("An error occurred while saving the images.", ephemeral=True)
+                    
+            # Create response embed
+            embed = discord.Embed(
+                title="Waffle Gifs Update",
+                color=discord.Color.green() if added_urls else discord.Color.orange()
+            )
+            
+            if added_urls:
+                embed.add_field(
+                    name="✅ Added URLs",
+                    value="\n".join(added_urls) if len("\n".join(added_urls)) <= 1024 else f"{len(added_urls)} URLs added",
+                    inline=False
+                )
+            
+            if skipped_urls:
+                embed.add_field(
+                    name="⚠️ Already Existing URLs",
+                    value="\n".join(skipped_urls) if len("\n".join(skipped_urls)) <= 1024 else f"{len(skipped_urls)} URLs skipped",
+                    inline=False
+                )
+                
+            embed.add_field(name="📊 Total Gifs", value=str(len(data["gifs"])), inline=False)
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="giflist", description="List all waffle gifs in the collection")
+    @app_commands.default_permissions(administrator=True)
+    async def giflist(self, interaction: discord.Interaction):
+        """List all waffle gifs in the collection"""
+        # Check if user is administrator
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("You need Administrator permission to use this command!", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Load images
+            data = await self.load_images()
+            
+            if not data["gifs"]:
+                return await interaction.followup.send("No waffle gifs in the collection!", ephemeral=True)
+                
+            # Create embed pages (max 10 URLs per page)
+            urls = data["gifs"]
+            urls_per_page = 10
+            pages = []
+            
+            for i in range(0, len(urls), urls_per_page):
+                page_urls = urls[i:i + urls_per_page]
+                
+                embed = discord.Embed(
+                    title="Waffle Gifs List",
+                    description=f"Page {len(pages) + 1}/{(len(urls) + urls_per_page - 1) // urls_per_page}",
+                    color=discord.Color.blue()
+                )
+                
+                for j, url in enumerate(page_urls, start=i+1):
+                    embed.add_field(
+                        name=f"#{j}",
+                        value=url,
+                        inline=False
+                    )
+                    
+                embed.set_footer(text=f"Total Gifs: {len(urls)}")
+                pages.append(embed)
+                
+            # Send first page
+            if len(pages) == 1:
+                await interaction.followup.send(embed=pages[0], ephemeral=True)
+            else:
+                # Add navigation buttons for multiple pages
+                current_page = 0
+                
+                view = discord.ui.View(timeout=300)  # 5 minutes timeout
+                
+                # Previous page button
+                prev_button = discord.ui.Button(
+                    label="◀️ Previous",
+                    style=discord.ButtonStyle.gray,
+                    custom_id="prev",
+                    disabled=True
+                )
+                
+                # Next page button
+                next_button = discord.ui.Button(
+                    label="Next ▶️",
+                    style=discord.ButtonStyle.gray,
+                    custom_id="next",
+                    disabled=len(pages) <= 1
+                )
+                
+                # Page indicator
+                page_indicator = discord.ui.Button(
+                    label=f"Page 1/{len(pages)}",
+                    style=discord.ButtonStyle.gray,
+                    disabled=True
+                )
+                
+                view.add_item(prev_button)
+                view.add_item(page_indicator)
+                view.add_item(next_button)
+                
+                message = await interaction.followup.send(embed=pages[0], view=view, ephemeral=True)
+                
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="removegifurl", description="Remove a gif URL from the collection")
+    @app_commands.default_permissions(administrator=True)
+    async def removegifurl(self, interaction: discord.Interaction, url: str):
+        """
+        Remove a gif URL from the collection
+        
+        Parameters
+        -----------
+        url: The URL to remove
+        """
+        # Check if user is administrator
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("You need Administrator permission to use this command!", ephemeral=True)
+            
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Load images
+            data = await self.load_images()
+            
+            if not data["gifs"]:
+                return await interaction.followup.send("No waffle gifs in the collection!", ephemeral=True)
+                
+            # Check if URL exists
+            if url not in data["gifs"]:
+                return await interaction.followup.send("This URL is not in the collection!", ephemeral=True)
+                
+            # Remove URL
+            data["gifs"].remove(url)
+            
+            # Save updated data
+            success = await self.save_images(data)
+            if not success:
+                return await interaction.followup.send("An error occurred while saving the changes.", ephemeral=True)
+                
+            # Create response embed
+            embed = discord.Embed(
+                title="Waffle Gif Removed",
+                description="The URL has been removed from the collection.",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(
+                name="Removed URL",
+                value=url,
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Remaining Gifs",
+                value=str(len(data["gifs"])),
+                inline=False
+            )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        """Event listener for button interactions"""
+        if not interaction.data or not interaction.data.get('custom_id'):
+            return
+            
+        custom_id = interaction.data['custom_id']
+        
+        # Handle giflist pagination
+        if custom_id in ['prev', 'next'] and interaction.message:
+            try:
+                # Get current embed
+                current_embed = interaction.message.embeds[0]
+                
+                # Get current page number
+                current_page = int(current_embed.description.split()[1]) - 1
+                total_pages = int(current_embed.description.split('/')[-1])
+                
+                # Load all gifs
+                data = await self.load_images()
+                urls = data["gifs"]
+                urls_per_page = 10
+                
+                # Calculate new page number
+                if custom_id == 'prev':
+                    new_page = max(0, current_page - 1)
+                else:  # next
+                    new_page = min(total_pages - 1, current_page + 1)
+                    
+                # Create new embed for the page
+                new_embed = discord.Embed(
+                    title="Waffle Gifs List",
+                    description=f"Page {new_page + 1}/{total_pages}",
+                    color=discord.Color.blue()
+                )
+                
+                # Add URLs for the new page
+                start_idx = new_page * urls_per_page
+                page_urls = urls[start_idx:start_idx + urls_per_page]
+                
+                for i, url in enumerate(page_urls, start=start_idx+1):
+                    new_embed.add_field(
+                        name=f"#{i}",
+                        value=url,
+                        inline=False
+                    )
+                    
+                new_embed.set_footer(text=f"Total Gifs: {len(urls)}")
+                
+                # Update button states
+                view = discord.ui.View(timeout=300)
+                
+                prev_button = discord.ui.Button(
+                    label="◀️ Previous",
+                    style=discord.ButtonStyle.gray,
+                    custom_id="prev",
+                    disabled=(new_page == 0)
+                )
+                
+                next_button = discord.ui.Button(
+                    label="Next ▶️",
+                    style=discord.ButtonStyle.gray,
+                    custom_id="next",
+                    disabled=(new_page == total_pages - 1)
+                )
+                
+                page_indicator = discord.ui.Button(
+                    label=f"Page {new_page + 1}/{total_pages}",
+                    style=discord.ButtonStyle.gray,
+                    disabled=True
+                )
+                
+                view.add_item(prev_button)
+                view.add_item(page_indicator)
+                view.add_item(next_button)
+                
+                # Update the message
+                await interaction.response.edit_message(embed=new_embed, view=view)
+                
+            except Exception as e:
+                await interaction.response.send_message(f"An error occurred: {str(e)}", ephemeral=True)
+                
+        # Handle other button interactions from existing handlers
+        elif custom_id.startswith('autorole_'):
+            # ... existing autorole handler code ...
+            pass
+        elif custom_id.startswith('permissions_'):
+            # ... existing permissions handler code ...
+            pass
+        elif custom_id.startswith('save_perms_'):
+            # ... existing save_perms handler code ...
+            pass
+        elif custom_id.startswith('delete_role_'):
+            # ... existing delete_role handler code ...
+            pass
+        elif custom_id.startswith('unlock_'):
+            # ... existing unlock handler code ...
+            pass
+        elif custom_id.startswith('banlist_'):
+            # ... existing banlist handler code ...
+            pass
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Utils(bot)) 
