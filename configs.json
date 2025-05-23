@@ -32,19 +32,5 @@
                 }
             ]
         }
-    },
-    "duty_settings": {
-        "1368125128868630529": {
-            "duty_channel_id": 1375541850706018304,
-            "duty_archive_channel_id": 1375553977479069777,
-            "user_info": {
-                "869295904543346749": {
-                    "name": "LaciaRedD",
-                    "duty_title": "Guarding the border",
-                    "timezone": "GMT+3"
-                }
-            },
-            "active_duties": {}
-        }
     }
 }
