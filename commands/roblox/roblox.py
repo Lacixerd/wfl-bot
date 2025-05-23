@@ -317,7 +317,6 @@ class Roblox(commands.Cog):
                             
                         game = data[0]
                         
-                        # Create embed
                         embed = discord.Embed(
                             title=f"Roblox Game: {game.get('name')}",
                             description=game.get('description', 'No description available.'),
@@ -325,7 +324,6 @@ class Roblox(commands.Cog):
                             url=f"https://www.roblox.com/games/{game_id}"
                         )
                         
-                        # Add game details
                         embed.add_field(name="Creator", value=game.get('creator', {}).get('name', 'Unknown'), inline=True)
                         embed.add_field(name="Playing", value=f"{game.get('playing', 0):,}", inline=True)
                         embed.add_field(name="Visits", value=f"{game.get('visits', 0):,}", inline=True)
