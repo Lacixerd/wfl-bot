@@ -1005,7 +1005,7 @@ Tablist Ended: {active_duty['image3_url']}
 
         embed = discord.Embed(
             title="Waffle Duty State Maker",
-            # description="ℹ️ When sending duty state images, upload them using Discord's file upload feature or use allowed links. Send your images one at a time in the order shown below. If you need more help, click **\"Duty State Maker Guide.\"**",
+            description="Please use the buttons below to setup and edit your duty information. You can not use this feature without setting up your informations. To see the supported timezones, click the \"Supported Timezones\" button. To start a duty, just send your images in the order shown below.\n 1) Duty Image\n 2) Tablist Started Image\n 3) Tablist Ended Image\n\nIf you need more help, please contact the server Bot Manager. Also if you want to report a bug, please contact the server Bot Manager.",
             color=discord.Color.blurple()
         )
         # embed.add_field(name="", value="• Duty Image\n• Tablist Started Image\n• Tablist Ended Image", inline=False)
