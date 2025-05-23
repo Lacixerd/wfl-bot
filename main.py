@@ -7,11 +7,7 @@ from discord import app_commands
 import asyncio
 import json
 
-from uptime import keep_alive
-
 load_dotenv()
-
-keep_alive()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 print(f"Token: {TOKEN}")
