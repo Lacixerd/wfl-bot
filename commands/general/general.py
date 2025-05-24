@@ -1015,11 +1015,9 @@ Tablist Ended: {active_duty['image3_url']}
         view = discord.ui.View()
         setup_button = discord.ui.Button(label="Setup & Edit Info", style=discord.ButtonStyle.primary, custom_id=f"duty_setup_{interaction.guild.id}")
         supported_tz_button = discord.ui.Button(label="Supported Timezones", style=discord.ButtonStyle.secondary, custom_id=f"supported_timezones_{interaction.guild.id}") # YENİ BUTON
-        history_button = discord.ui.Button(label="Duty History", style=discord.ButtonStyle.secondary, custom_id=f"duty_history_{interaction.guild.id}", disabled=True) # Şimdilik devre dışı
 
         view.add_item(setup_button)
         view.add_item(supported_tz_button) # YENİ BUTON EKLENDİ
-        view.add_item(history_button)
 
         try:
             await channel.send(embed=embed, view=view)
@@ -1143,8 +1141,8 @@ class DutySetupModal(discord.ui.Modal, title='Setup & Edit Duty Info'):
         max_length=100
     )
     timezone_str = discord.ui.TextInput(
-        label='Timezone (e.g., Europe/Istanbul)',
-        placeholder='Examples: Europe/London, America/New_York, Etc/GMT-3, UTC',
+        label='Timezone',
+        placeholder='Examples: GMT+3, EST, GMT, UTC',
         required=True,
         max_length=50 # Increased for longer TZ names
     )
