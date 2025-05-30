@@ -3029,5 +3029,206 @@ class Admin(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
 
+    @app_commands.command(name="embed", description="Create and send a custom embed message")
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.guild_only()
+    async def embed(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        """
+        Create and send a custom embed message with a modal interface
+        
+        Parameters
+        -----------
+        channel: The channel to send the embed to (optional, defaults to current channel)
+        """
+        # Check if user has permission to manage messages
+        if not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message("You need 'Manage Messages' permission to use this command.", ephemeral=True)
+        
+        # Use current channel if no channel specified
+        target_channel = channel or interaction.channel
+        
+        # Check if bot has permission to send messages in the target channel
+        if not target_channel.permissions_for(interaction.guild.me).send_messages:
+            return await interaction.response.send_message(f"Bot cannot send messages in {target_channel.mention}. Please check permissions.", ephemeral=True)
+        
+        # Create and show the modal
+        modal = EmbedModal(target_channel)
+        await interaction.response.send_modal(modal)
+
+class EmbedModal(discord.ui.Modal, title='Create Embed Message'):
+    def __init__(self, target_channel):
+        super().__init__()
+        self.target_channel = target_channel
+
+    color_input = discord.ui.TextInput(
+        label='Color (Optional)',
+        placeholder='Hex code (#FF5733) or color name (red, blue, green...) - default is yellow',
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=50
+    )
+
+    title_input = discord.ui.TextInput(
+        label='Title (Optional)',
+        placeholder='The title of the embed message...',
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=256
+    )
+
+    description_input = discord.ui.TextInput(
+        label='Description (Required)',
+        placeholder='The main content of the embed message... (This field is required)',
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=4000
+    )
+
+    image_input = discord.ui.TextInput(
+        label='Image URL (Optional)',
+        placeholder='URL of the image you want to add to the embed... (e.g: https://example.com/image.png)',
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=500
+    )
+
+    footer_input = discord.ui.TextInput(
+        label='Footer (Optional)',
+        placeholder='Text at the bottom of the embed message...',
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=2048
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Determine color
+            embed_color = discord.Color.gold()  # Default yellow color
+            
+            if self.color_input.value.strip():
+                color_value = self.color_input.value.strip().lower()
+                
+                # Check
+                if color_value.startswith('#'):
+                    try:
+                        hex_color = color_value[1:]
+                        if len(hex_color) == 6:
+                            embed_color = discord.Color(int(hex_color, 16))
+                        else:
+                            return await interaction.followup.send("Invalid hex color code. Format: #FF5733", ephemeral=True)
+                    except ValueError:
+                        return await interaction.followup.send("Invalid hex color code. Format: #FF5733", ephemeral=True)
+                else:
+                    # Color names mapping
+                    color_map = {
+                        "red": discord.Color.red(),
+                        "green": discord.Color.green(),
+                        "blue": discord.Color.blue(),
+                        "yellow": discord.Color.gold(),
+                        "gold": discord.Color.gold(),
+                        "orange": discord.Color.orange(),
+                        "purple": discord.Color.purple(),
+                        "pink": discord.Color(0xFFC0CB),
+                        "black": discord.Color(0x000000),
+                        "white": discord.Color(0xFFFFFF),
+                        "gray": discord.Color(0x808080),
+                        "cyan": discord.Color(0x00FFFF),
+                        "teal": discord.Color.teal(),
+                    }
+                    
+                    if color_value in color_map:
+                        embed_color = color_map[color_value]
+                    else:
+                        return await interaction.followup.send(
+                            f"Unknown color: '{color_value}'. Supported colors: " +
+                            ", ".join(["red", "green", "blue", "yellow", "orange", "purple", "pink", "black", "white", "gray"]) +
+                            " or hex code (#FF5733)",
+                            ephemeral=True
+                        )
+            
+            # Create embed
+            embed = discord.Embed(
+                description=self.description_input.value,
+                color=embed_color,
+                timestamp=discord.utils.utcnow()
+            )
+            
+            # Add title
+            if self.title_input.value.strip():
+                embed.title = self.title_input.value.strip()
+            
+            # Add image
+            if self.image_input.value.strip():
+                image_url = self.image_input.value.strip()
+                # Simple URL validation
+                if image_url.startswith(('http://', 'https://')):
+                    embed.set_image(url=image_url)
+                else:
+                    return await interaction.followup.send("Invalid image URL. URL must start with 'http://' or 'https://'.", ephemeral=True)
+            
+            # Add footer
+            if self.footer_input.value.strip():
+                embed.set_footer(text=self.footer_input.value.strip())
+            else:
+                embed.set_footer()
+            
+            # Send embed
+            sent_message = await self.target_channel.send(embed=embed)
+            
+            # Success message
+            success_embed = discord.Embed(
+                title="✅ Embed Message Sent",
+                description=f"Your embed message has been successfully sent to {self.target_channel.mention} channel.",
+                color=discord.Color.green()
+            )
+            
+            success_embed.add_field(name="Message Link", value=f"[View Message]({sent_message.jump_url})", inline=False)
+            
+            if self.title_input.value.strip():
+                success_embed.add_field(name="Title", value=self.title_input.value.strip(), inline=True)
+            
+            success_embed.add_field(name="Color", value=f"#{embed_color.value:06X}", inline=True)
+            
+            if self.image_input.value.strip():
+                success_embed.add_field(name="Image", value="✅ Added", inline=True)
+            
+            await interaction.followup.send(embed=success_embed, ephemeral=True)
+            
+        except discord.Forbidden:
+            await interaction.followup.send("Hedef kanala mesaj gönderme iznim yok.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"Bir hata oluştu: {str(e)}", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.followup.send(f"Modal işlemi sırasında bir hata oluştu: {str(error)}", ephemeral=True)
+
+    async def get_modlog_channel(self, guild):
+        """Get the configured modlog channel for a guild"""
+        try:
+            # Check if config file exists
+            if not os.path.exists('configs.json'):
+                return None
+                
+            # Load config
+            with open('configs.json', 'r') as f:
+                configs = json.load(f)
+                
+            # Check if modlog and guilds sections exist
+            if 'modlog' not in configs or 'guilds' not in configs['modlog']:
+                return None
+                
+            # Get guild specific channel
+            guild_id = str(guild.id)
+            if guild_id in configs['modlog']['guilds']:
+                channel_id = configs['modlog']['guilds'][guild_id]['channel_id']
+                return guild.get_channel(channel_id)
+                
+            return None
+        except Exception as e:
+            print(f"Error getting modlog channel: {e}")
+            return None
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))
