@@ -2881,5 +2881,153 @@ class Admin(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
 
+    @app_commands.command(name="addbadword", description="Add a bad word to the filter list")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def addbadword(
+        self, 
+        interaction: discord.Interaction, 
+        word: str
+    ):
+        """Add a bad word to the filter list (Administrator only)"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Load current bad words
+            if os.path.exists('bad_words.json'):
+                with open('bad_words.json', 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            else:
+                data = {"slurs": []}
+            
+            word_lower = word.lower()
+            
+            # Check if word already exists
+            if word_lower in [w.lower() for w in data.get('slurs', [])]:
+                await interaction.followup.send(f"**{word}** is already in the bad words list.", ephemeral=True)
+                return
+            
+            # Add the word
+            data['slurs'].append(word_lower)
+            
+            # Save back to file
+            with open('bad_words.json', 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            embed = discord.Embed(
+                title="✅ Bad Word Added",
+                description=f"**{word}** has been added to the bad words filter.",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=True)
+            embed.add_field(name="Date", value=f"<t:{int(discord.utils.utcnow().timestamp())}:F>", inline=True)
+            embed.set_footer(text=f"Total bad words: {len(data['slurs'])}")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="removebadword", description="Remove a bad word from the filter list")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def removebadword(
+        self, 
+        interaction: discord.Interaction, 
+        word: str
+    ):
+        """Remove a bad word from the filter list (Administrator only)"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Load current bad words
+            if not os.path.exists('bad_words.json'):
+                await interaction.followup.send("Bad words file not found.", ephemeral=True)
+                return
+                
+            with open('bad_words.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            word_lower = word.lower()
+            original_count = len(data.get('slurs', []))
+            
+            # Remove the word (case insensitive)
+            data['slurs'] = [w for w in data.get('slurs', []) if w.lower() != word_lower]
+            
+            if len(data['slurs']) == original_count:
+                await interaction.followup.send(f"**{word}** was not found in the bad words list.", ephemeral=True)
+                return
+            
+            # Save back to file
+            with open('bad_words.json', 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            embed = discord.Embed(
+                title="✅ Bad Word Removed",
+                description=f"**{word}** has been removed from the bad words filter.",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=True)
+            embed.add_field(name="Date", value=f"<t:{int(discord.utils.utcnow().timestamp())}:F>", inline=True)
+            embed.set_footer(text=f"Total bad words: {len(data['slurs'])}")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="listbadwords", description="Show the current list of filtered bad words")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def listbadwords(
+        self, 
+        interaction: discord.Interaction,
+        page: int = 1
+    ):
+        """Show the current list of filtered bad words (Administrator only)"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Load current bad words
+            if not os.path.exists('bad_words.json'):
+                await interaction.followup.send("Bad words file not found.", ephemeral=True)
+                return
+                
+            with open('bad_words.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            bad_words = data.get('slurs', [])
+            
+            if not bad_words:
+                await interaction.followup.send("No bad words in the filter list.", ephemeral=True)
+                return
+            
+            # Pagination
+            words_per_page = 20
+            total_pages = math.ceil(len(bad_words) / words_per_page)
+            page = max(1, min(page, total_pages))
+            
+            start_idx = (page - 1) * words_per_page
+            end_idx = start_idx + words_per_page
+            page_words = bad_words[start_idx:end_idx]
+            
+            embed = discord.Embed(
+                title="🚫 Bad Words Filter List",
+                description=f"Page {page}/{total_pages}",
+                color=discord.Color.red()
+            )
+            
+            words_text = ""
+            for i, word in enumerate(page_words, start_idx + 1):
+                words_text += f"`{i}.` {word}\n"
+            
+            embed.add_field(name="Filtered Words", value=words_text or "No words on this page", inline=False)
+            embed.set_footer(text=f"Total: {len(bad_words)} words | Use /addbadword or /removebadword to manage")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))
