@@ -17,6 +17,25 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+def load_bad_words():
+    try:
+        with open('bad_words.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return [word.lower() for word in data.get('slurs', [])]
+    except FileNotFoundError:
+        print("bad_words.json file not found!")
+        return []
+    except Exception as e:
+        print(f"Error loading bad words: {e}")
+        return []
+
+def contains_bad_word(message_content, bad_words):
+    message_lower = message_content.lower()
+    for bad_word in bad_words:
+        if bad_word in message_lower:
+            return True
+    return False
+
 class Bot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='/', intents=intents)
@@ -47,25 +66,20 @@ async def on_ready():
 
 def get_join_leave_channel(guild):
     try:
-        # Check if config file exists
         if not os.path.exists('configs.json'):
             return None
             
-        # Load config
         with open('configs.json', 'r') as f:
             configs = json.load(f)
             
-        # Check if joinleave and guilds sections exist
         if 'joinleave' not in configs or 'guilds' not in configs['joinleave']:
             return None
             
-        # Get guild specific channel
         guild_id = str(guild.id)
         if guild_id in configs['joinleave']['guilds']:
             channel_id = configs['joinleave']['guilds'][guild_id]['channel_id']
             return guild.get_channel(channel_id)
             
-        # Fall back to default channel if configured
         if 'channel' in configs['joinleave']:
             default_channel = configs['joinleave']['channel']
             return discord.utils.get(guild.text_channels, name=default_channel)
@@ -86,10 +100,8 @@ async def on_member_join(member):
     embed.add_field(name="Join Date", value=member.joined_at.strftime("%d/%m/%Y, %H:%M:%S"), inline=True)
     embed.set_footer(text=f"Member Count: {member.guild.member_count}")
     
-    # Get configured channel from config file
     channel = get_join_leave_channel(member.guild)
     
-    # Fall back to traditional channel finding if config not found
     if not channel:
         channel = discord.utils.get(member.guild.text_channels, name="joins")
         if not channel:
@@ -109,10 +121,8 @@ async def on_member_remove(member):
     embed.add_field(name="Leave Date", value=discord.utils.utcnow().strftime("%d/%m/%Y, %H:%M:%S"), inline=True)
     embed.set_footer(text=f"Member Count: {member.guild.member_count}")
     
-    # Get configured channel from config file
     channel = get_join_leave_channel(member.guild)
     
-    # Fall back to traditional channel finding if config not found
     if not channel:
         channel = discord.utils.get(member.guild.text_channels, name="joins")
         if not channel:
@@ -125,10 +135,33 @@ async def on_member_remove(member):
 async def on_message(message):
     if message.author == bot.user:
         return
-    if "fuck" in message.content.lower():
+    
+    # Kötü kelime kontrolü
+    bad_words = load_bad_words()
+    if contains_bad_word(message.content, bad_words):
         await message.delete()
-        await message.channel.send(f"{message.author.mention} Please don't use that word here.")
+        embed = discord.Embed(
+            title="⚠️ You have been warned",
+            description=f"{message.author.mention} Please don't use that word here.",
+            color=discord.Color.red()
+        )
+        await message.channel.send(embed=embed, delete_after=10)
         return
+    
+    # Mevcut kontroller
+    if "wfl sucks" in message.content.lower() or "waffle sucks" in message.content.lower():
+        await message.delete()
+        await message.channel.send(f"{message.author.mention} You suck 😡")
+        return
+    elif "this bot sucks" in message.content.lower():
+        await message.delete()
+        await message.channel.send(f"{message.author.mention} You suck 😡")
+        return
+    elif "this bot is good" in message.content.lower():
+        await message.delete()
+        await message.channel.send(f"{message.author.mention} Thank you 😊")
+        return
+
     await bot.process_commands(message)
 
 bot.run(TOKEN, log_handler=handler, log_level=logging.DEBUG)
