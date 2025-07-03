@@ -1652,7 +1652,7 @@ class Admin(commands.Cog):
             embed.add_field(name="Usage", value="Click the button below to get the role.\nClick again to remove the role.", inline=False)
             embed.set_footer(text=f"Role ID: {role.id}")
             
-            # Buton ekle
+            # Add the button
             view = discord.ui.View(timeout=None)
             button = discord.ui.Button(
                 label=f"Toggle {role.name} Role", 
@@ -1661,10 +1661,10 @@ class Admin(commands.Cog):
             )
             view.add_item(button)
             
-            # Mesajı gönder
+            # Send the message
             role_message = await channel.send(embed=embed, view=view)
             
-            # Onay mesajı
+            # Success message
             success_embed = discord.Embed(
                 title="Auto Role Message Created",
                 description=f"Auto role message sent to {channel.mention}.",
@@ -3055,6 +3055,81 @@ class Admin(commands.Cog):
         modal = EmbedModal(target_channel)
         await interaction.response.send_modal(modal)
 
+    @app_commands.command(name="editembed", description="Edit an existing embed message")
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.guild_only()
+    async def editembed(
+        self, 
+        interaction: discord.Interaction, 
+        message_id: str,
+        channel: discord.TextChannel = None
+    ):
+        """
+        Edit an existing embed message
+        
+        Parameters
+        -----------
+        message_id: The ID or URL of the message to edit
+        channel: The channel where the message is located (optional, defaults to current channel)
+        """
+        # Check if user has permission to manage messages
+        if not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message("You need 'Manage Messages' permission to use this command.", ephemeral=True)
+        
+        try:
+            # Parse message ID from URL if provided
+            if "discord.com/channels/" in message_id:
+                # Extract message ID from Discord URL
+                url_parts = message_id.split("/")
+                if len(url_parts) >= 3:
+                    message_id = url_parts[-1]
+                    # Also extract channel ID if not provided
+                    if not channel and len(url_parts) >= 2:
+                        try:
+                            channel_id = int(url_parts[-2])
+                            channel = interaction.guild.get_channel(channel_id)
+                        except:
+                            pass
+            
+            # Use current channel if no channel specified
+            target_channel = channel or interaction.channel
+            
+            # Check if bot has permission to manage messages in the target channel
+            if not target_channel.permissions_for(interaction.guild.me).manage_messages:
+                return await interaction.response.send_message(f"I don't have permission to manage messages in {target_channel.mention}.", ephemeral=True)
+            
+            # Try to fetch the message
+            try:
+                message_id_int = int(message_id)
+                message = await target_channel.fetch_message(message_id_int)
+            except ValueError:
+                return await interaction.response.send_message("Invalid message ID. Please enter a valid message ID or Discord URL.", ephemeral=True)
+            except discord.NotFound:
+                return await interaction.response.send_message("Message not found. Make sure the message is in the correct channel.", ephemeral=True)
+            except discord.Forbidden:
+                return await interaction.response.send_message("You don't have permission to view this message.", ephemeral=True)
+            
+            # Check if the message was sent by the bot
+            if message.author.id != interaction.client.user.id:
+                return await interaction.response.send_message("I can only edit messages sent by the bot.", ephemeral=True)
+            
+            # Check if the message has an embed
+            if not message.embeds:
+                return await interaction.response.send_message("There is no editable embed in this message.", ephemeral=True)
+            
+            # Get the first embed
+            current_embed = message.embeds[0]
+            
+            # Create and show the edit modal with current embed data
+            modal = EditEmbedModal(message, current_embed)
+            await interaction.response.send_modal(modal)
+            
+        except Exception as e:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"An error occurred: {str(e)}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
 class EmbedModal(discord.ui.Modal, title='Create Embed Message'):
     def __init__(self, target_channel):
         super().__init__()
@@ -3197,12 +3272,176 @@ class EmbedModal(discord.ui.Modal, title='Create Embed Message'):
             await interaction.followup.send(embed=success_embed, ephemeral=True)
             
         except discord.Forbidden:
-            await interaction.followup.send("Hedef kanala mesaj gönderme iznim yok.", ephemeral=True)
+            await interaction.followup.send("I don't have permission to send messages in the target channel.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"Bir hata oluştu: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.followup.send(f"Modal işlemi sırasında bir hata oluştu: {str(error)}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred during the modal process: {str(error)}", ephemeral=True)
+
+class EditEmbedModal(discord.ui.Modal, title='Edit Embed Message'):
+    def __init__(self, message, current_embed):
+        super().__init__()
+        self.message = message
+        
+        # Initialize text inputs with current embed data
+        self.color_input = discord.ui.TextInput(
+            label='Color (Optional)',
+            placeholder='Hex code (#FF5733) or color name (red, blue, green...)',
+            style=discord.TextStyle.short,
+            required=False,
+            max_length=50,
+            default=f"#{current_embed.color.value:06X}" if current_embed.color else ""
+        )
+        
+        self.title_input = discord.ui.TextInput(
+            label='Title (Optional)',
+            placeholder='The title of the embed message...',
+            style=discord.TextStyle.short,
+            required=False,
+            max_length=256,
+            default=current_embed.title or ""
+        )
+        
+        self.description_input = discord.ui.TextInput(
+            label='Description (Required)',
+            placeholder='The main content of the embed message...',
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=4000,
+            default=current_embed.description or ""
+        )
+        
+        self.image_input = discord.ui.TextInput(
+            label='Image URL (Optional)',
+            placeholder='URL of the image...',
+            style=discord.TextStyle.short,
+            required=False,
+            max_length=500,
+            default=current_embed.image.url if current_embed.image else ""
+        )
+        
+        self.footer_input = discord.ui.TextInput(
+            label='Footer (Optional)',
+            placeholder='Text at the bottom...',
+            style=discord.TextStyle.short,
+            required=False,
+            max_length=2048,
+            default=current_embed.footer.text if current_embed.footer else ""
+        )
+        
+        # Add all text inputs to the modal
+        self.add_item(self.color_input)
+        self.add_item(self.title_input)
+        self.add_item(self.description_input)
+        self.add_item(self.image_input)
+        self.add_item(self.footer_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Determine color
+            embed_color = discord.Color.gold()  # Default yellow color
+            
+            if self.color_input.value.strip():
+                color_value = self.color_input.value.strip().lower()
+                
+                # Check for hex color
+                if color_value.startswith('#'):
+                    try:
+                        hex_color = color_value[1:]
+                        if len(hex_color) == 6:
+                            embed_color = discord.Color(int(hex_color, 16))
+                        else:
+                            return await interaction.followup.send("Invalid hex color code. Format: #FF5733", ephemeral=True)
+                    except ValueError:
+                        return await interaction.followup.send("Invalid hex color code. Format: #FF5733", ephemeral=True)
+                else:
+                    # Color names mapping
+                    color_map = {
+                        "red": discord.Color.red(),
+                        "green": discord.Color.green(),
+                        "blue": discord.Color.blue(),
+                        "yellow": discord.Color.gold(),
+                        "gold": discord.Color.gold(),
+                        "orange": discord.Color.orange(),
+                        "purple": discord.Color.purple(),
+                        "pink": discord.Color(0xFFC0CB),
+                        "black": discord.Color(0x000000),
+                        "white": discord.Color(0xFFFFFF),
+                        "gray": discord.Color(0x808080),
+                        "cyan": discord.Color(0x00FFFF),
+                        "teal": discord.Color.teal(),
+                    }
+                    
+                    if color_value in color_map:
+                        embed_color = color_map[color_value]
+                    else:
+                        return await interaction.followup.send(
+                            f"Unknown color: '{color_value}'. Supported colors: " +
+                            ", ".join(["red", "green", "blue", "yellow", "orange", "purple", "pink", "black", "white", "gray"]) +
+                            " or hex code (#FF5733)",
+                            ephemeral=True
+                        )
+            
+            # Create new embed
+            embed = discord.Embed(
+                description=self.description_input.value,
+                color=embed_color,
+                timestamp=discord.utils.utcnow()
+            )
+            
+            # Add title if provided
+            if self.title_input.value.strip():
+                embed.title = self.title_input.value.strip()
+            
+            # Add image if provided
+            if self.image_input.value.strip():
+                image_url = self.image_input.value.strip()
+                # Simple URL validation
+                if image_url.startswith(('http://', 'https://')):
+                    embed.set_image(url=image_url)
+                else:
+                    return await interaction.followup.send("Invalid image URL. URL must start with 'http://' or 'https://'.", ephemeral=True)
+            
+            # Add footer if provided
+            if self.footer_input.value.strip():
+                embed.set_footer(text=self.footer_input.value.strip())
+            else:
+                embed.set_footer()
+            
+            # Edit the original message
+            await self.message.edit(embed=embed)
+            
+            # Success message
+            success_embed = discord.Embed(
+                title="✅ Embed Message Edited",
+                description=f"Your embed message has been successfully edited.",
+                color=discord.Color.green()
+            )
+            
+            success_embed.add_field(name="Message Link", value=f"[View Message]({self.message.jump_url})", inline=False)
+            
+            if self.title_input.value.strip():
+                success_embed.add_field(name="Title", value=self.title_input.value.strip(), inline=True)
+            
+            success_embed.add_field(name="Color", value=f"#{embed_color.value:06X}", inline=True)
+            
+            if self.image_input.value.strip():
+                success_embed.add_field(name="Image", value="✅ Added", inline=True)
+            
+            await interaction.followup.send(embed=success_embed, ephemeral=True)
+            
+        except discord.Forbidden:
+            await interaction.followup.send("You don't have permission to edit this message.", ephemeral=True)
+        except discord.NotFound:
+            await interaction.followup.send("Message not found.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.followup.send(f"An error occurred during the modal process: {str(error)}", ephemeral=True)
 
     async def get_modlog_channel(self, guild):
         """Get the configured modlog channel for a guild"""
