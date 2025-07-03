@@ -39,13 +39,107 @@ class Utils(commands.Cog):
             return False
 
     @app_commands.command(name="userinfo", description="Shows information about a user")
-    async def userinfo(self, interaction: discord.Interaction, user: discord.Member = None):
-        user = user or interaction.user
-        embed = discord.Embed(title="User Information", color=user.color)
-        embed.set_thumbnail(url=user.avatar.url if user.avatar else user.default_avatar.url)
-        embed.add_field(name="Username", value=user.name, inline=True)
-        embed.add_field(name="ID", value=user.id, inline=True)
-        embed.add_field(name="Joined At", value=user.joined_at.strftime("%Y-%m-%d %H:%M:%S"), inline=False)
+    async def userinfo(self, interaction: discord.Interaction, user: discord.Member = None, user_id: str = None):
+        """
+        Shows information about a user
+        
+        Parameters
+        -----------
+        user: The user to get information about
+        user_id: User ID to search for if user is not provided
+        """
+        target_user = None
+        
+        # If user is provided, use it
+        if user:
+            target_user = user
+        # If user_id is provided, try to find the user by ID
+        elif user_id:
+            try:
+                # Convert string to int
+                user_id_int = int(user_id)
+                # Try to get member from current guild first
+                target_user = interaction.guild.get_member(user_id_int)
+                
+                # If not found in guild, try to fetch user from Discord
+                if not target_user:
+                    try:
+                        fetched_user = await self.bot.fetch_user(user_id_int)
+                        # Create a basic user info embed for non-guild members
+                        embed = discord.Embed(title="User Information (Not in this server)", color=discord.Color.blue())
+                        embed.set_thumbnail(url=fetched_user.avatar.url if fetched_user.avatar else fetched_user.default_avatar.url)
+                        embed.add_field(name="Username", value=fetched_user.name, inline=True)
+                        embed.add_field(name="Display Name", value=fetched_user.display_name, inline=True)
+                        embed.add_field(name="ID", value=fetched_user.id, inline=True)
+                        embed.add_field(name="Created At", value=f"<t:{int(fetched_user.created_at.timestamp())}:F>", inline=False)
+                        embed.add_field(name="Bot", value="Yes" if fetched_user.bot else "No", inline=True)
+                        embed.set_footer(text="This user is not a member of this server")
+                        return await interaction.response.send_message(embed=embed)
+                    except discord.NotFound:
+                        return await interaction.response.send_message(f"User with ID `{user_id}` not found.", ephemeral=True)
+                    except discord.HTTPException:
+                        return await interaction.response.send_message("An error occurred while fetching user information.", ephemeral=True)
+                        
+            except ValueError:
+                return await interaction.response.send_message("Invalid user ID. Please provide a valid numerical ID.", ephemeral=True)
+        else:
+            # If neither user nor user_id is provided, use the command invoker
+            target_user = interaction.user
+            
+        # Create embed for guild member
+        embed = discord.Embed(title="User Information", color=target_user.color)
+        embed.set_thumbnail(url=target_user.avatar.url if target_user.avatar else target_user.default_avatar.url)
+        
+        embed.add_field(name="Username", value=target_user.name, inline=True)
+        embed.add_field(name="Display Name", value=target_user.display_name, inline=True)
+        embed.add_field(name="ID", value=target_user.id, inline=True)
+        
+        embed.add_field(name="Created At", value=f"<t:{int(target_user.created_at.timestamp())}:F>", inline=False)
+        if target_user.joined_at:
+            embed.add_field(name="Joined At", value=f"<t:{int(target_user.joined_at.timestamp())}:F>", inline=False)
+            
+        embed.add_field(name="Bot", value="Yes" if target_user.bot else "No", inline=True)
+        
+        # Add status if available
+        if hasattr(target_user, 'status'):
+            status_emojis = {
+                discord.Status.online: "🟢",
+                discord.Status.idle: "🟡", 
+                discord.Status.dnd: "🔴",
+                discord.Status.offline: "⚫"
+            }
+            status_emoji = status_emojis.get(target_user.status, "❓")
+            embed.add_field(name="Status", value=f"{status_emoji} {target_user.status.name.title()}", inline=True)
+        
+        # Add roles if it's a guild member
+        if hasattr(target_user, 'roles') and len(target_user.roles) > 1:
+            roles = [role.mention for role in target_user.roles if role.name != "@everyone"]
+            roles.reverse()  # Highest role first
+            if roles:
+                roles_text = " ".join(roles[:10])  # Limit to 10 roles to avoid embed limits
+                if len(target_user.roles) > 11:  # 10 + @everyone
+                    roles_text += f" ... and {len(target_user.roles) - 11} more"
+                embed.add_field(name=f"Roles [{len(target_user.roles) - 1}]", value=roles_text, inline=False)
+        
+        # Add permissions if it's a guild member
+        if hasattr(target_user, 'guild_permissions'):
+            key_perms = []
+            if target_user.guild_permissions.administrator:
+                key_perms.append("Administrator")
+            elif target_user.guild_permissions.manage_guild:
+                key_perms.append("Manage Server")
+            elif target_user.guild_permissions.manage_channels:
+                key_perms.append("Manage Channels")
+            elif target_user.guild_permissions.manage_messages:
+                key_perms.append("Manage Messages")
+            elif target_user.guild_permissions.kick_members:
+                key_perms.append("Kick Members")
+            elif target_user.guild_permissions.ban_members:
+                key_perms.append("Ban Members")
+                
+            if key_perms:
+                embed.add_field(name="Key Permissions", value=", ".join(key_perms), inline=False)
+        
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="calculate", description="Calculate a mathematical expression")
