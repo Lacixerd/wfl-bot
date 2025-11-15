@@ -363,9 +363,6 @@ class General(commands.Cog):
         formatted_time = current_time_user_local.strftime("%H:%M") + f" {final_display_tz_str}"
 
         if not active_duty: # İlk fotoğraf, yeni görev başlat
-            # TODO: Kullanıcının zaten başka bir aktif görevi olmadığından emin ol (gerekirse)
-            # Bu yapı zaten kullanıcı başına tek bir aktif göreve izin veriyor.
-
             duty_id = f"duty_{message.id}" # Benzersiz bir görev ID'si
             new_duty = {
                 "id": duty_id,
@@ -379,6 +376,7 @@ class General(commands.Cog):
                 "image3_url": None,
                 "time_ended": None,
                 "status_message_id": None, # Görev durumunu gösteren embed mesajının ID'si
+                "archive_message_id": None, # Archive kanalındaki mesajın ID'si
                 "original_channel_id": message.channel.id
             }
             guild_settings["active_duties"][user_id_str] = new_duty
@@ -389,7 +387,7 @@ class General(commands.Cog):
                 description=f"Started at: {new_duty['time_started']}\nElapsed Time: Calculating...",
                 color=discord.Color.green()
             )
-            embed.add_field(name="Duty Image (1)", value=f"[Link]({new_duty['image1_url']})", inline=False)
+            embed.add_field(name="Tablist Started (1)", value=f"[Link]({new_duty['image1_url']})", inline=False)
             embed.set_footer(text=f"Duty ID: {duty_id}")
 
             view = discord.ui.View(timeout=None) # Butonlar kalıcı olsun
@@ -399,7 +397,24 @@ class General(commands.Cog):
             try:
                 status_message = await message.channel.send(embed=embed, view=view)
                 new_duty["status_message_id"] = status_message.id
-                save_config(config) # config'i burada kaydet, status_message.id eklendikten sonra
+                
+                # Archive kanalına da aynı embed'i gönder (buton olmadan)
+                if archive_channel:
+                    try:
+                        archive_embed = discord.Embed(
+                            title=embed.title,
+                            description=embed.description,
+                            color=embed.color
+                        )
+                        archive_embed.add_field(name="Tablist Started (1)", value=f"[Link]({new_duty['image1_url']})", inline=False)
+                        archive_embed.set_footer(text=embed.footer.text)
+                        
+                        archive_message = await archive_channel.send(embed=archive_embed)
+                        new_duty["archive_message_id"] = archive_message.id
+                    except Exception as e:
+                        print(f"Error sending embed to archive channel: {e}")
+                
+                save_config(config) # config'i burada kaydet, message ID'leri eklendikten sonra
                 # Zamanlayıcıyı başlat
                 self.start_duty_timer(interaction_or_message=message, duty_data=new_duty)
             except Exception as e:
@@ -410,9 +425,9 @@ class General(commands.Cog):
                     save_config(config)
             
             try: # Orijinal mesajı silmeyi dene
-                await message.delete() # Tekrar aktif hale getirildi
+                await message.delete()
             except discord.Forbidden:
-                pass # Silinemiyorsa önemli değil
+                pass
             except discord.NotFound:
                 pass
 
@@ -428,12 +443,33 @@ class General(commands.Cog):
                     description=original_embed.description, # Zamanlayıcı bunu güncelleyecek
                     color=original_embed.color
                 )
-                new_embed.add_field(name="Duty Image (1)", value=f"[Link]({active_duty['image1_url']})", inline=False)
-                new_embed.add_field(name="Tablist Started (2)", value=f"[Link]({active_duty['image2_url']})", inline=False)
+                new_embed.add_field(name="Tablist Started (1)", value=f"[Link]({active_duty['image1_url']})", inline=False)
+                new_embed.add_field(name="Duty Image (2)", value=f"[Link]({active_duty['image2_url']})", inline=False)
                 if original_embed.footer:
                     new_embed.set_footer(text=original_embed.footer.text)
                 
                 await status_message.edit(embed=new_embed)
+                
+                # Archive kanalındaki mesajı da güncelle
+                if archive_channel and active_duty.get("archive_message_id"):
+                    try:
+                        archive_message = await archive_channel.fetch_message(active_duty["archive_message_id"])
+                        archive_embed = discord.Embed(
+                            title=new_embed.title,
+                            description=new_embed.description,
+                            color=new_embed.color
+                        )
+                        archive_embed.add_field(name="Tablist Started (1)", value=f"[Link]({active_duty['image1_url']})", inline=False)
+                        archive_embed.add_field(name="Duty Image (2)", value=f"[Link]({active_duty['image2_url']})", inline=False)
+                        if new_embed.footer:
+                            archive_embed.set_footer(text=new_embed.footer.text)
+                        
+                        await archive_message.edit(embed=archive_embed)
+                    except discord.NotFound:
+                        print(f"Archive message not found for duty {active_duty['id']}")
+                    except Exception as e:
+                        print(f"Error updating archive embed: {e}")
+                
                 save_config(config)
             except discord.NotFound:
                 await message.channel.send(f"{message.author.mention}, could not find the original duty status message. Please start a new duty if needed.", delete_after=20)
@@ -443,7 +479,7 @@ class General(commands.Cog):
                 print(f"Error updating duty status message for 2nd image: {e}")
             
             try:
-                await message.delete() # Tekrar aktif hale getirildi
+                await message.delete()
             except discord.Forbidden:
                 pass
             except discord.NotFound:
@@ -465,7 +501,7 @@ class General(commands.Cog):
                 original_embed = status_message.embeds[0]
                 
                 # Geçen süreyi son kez hesapla
-                time_started_dt = datetime.datetime.fromtimestamp(active_duty["time_started_timestamp"], tz=datetime.timezone.utc) # pytz.utc yerine datetime.timezone.utc
+                time_started_dt = datetime.datetime.fromtimestamp(active_duty["time_started_timestamp"], tz=datetime.timezone.utc)
                 elapsed_seconds = (current_time_utc - time_started_dt).total_seconds()
                 days, remainder = divmod(elapsed_seconds, 86400)
                 hours, remainder = divmod(remainder, 3600)
@@ -481,14 +517,35 @@ class General(commands.Cog):
                     description=final_description,
                     color=discord.Color.gold()
                 )
-                final_embed.add_field(name="Duty Image (1)", value=f"[Link]({active_duty['image1_url']})", inline=False)
-                final_embed.add_field(name="Tablist Started (2)", value=f"[Link]({active_duty['image2_url']})", inline=False)
+                final_embed.add_field(name="Tablist Started (1)", value=f"[Link]({active_duty['image1_url']})", inline=False)
+                final_embed.add_field(name="Duty Image (2)", value=f"[Link]({active_duty['image2_url']})", inline=False)
                 final_embed.add_field(name="Tablist Ended (3)", value=f"[Link]({active_duty['image3_url']})", inline=False)
                 if original_embed.footer:
                     final_embed.set_footer(text=original_embed.footer.text + " - Completed")
 
-                # Butonları kaldır veya mesajı sil butonu ekle (kullanıcıya DM gidecekse)
-                await status_message.edit(embed=final_embed, view=None) # Butonları kaldır
+                # Butonları kaldır
+                await status_message.edit(embed=final_embed, view=None)
+                
+                # Archive kanalındaki mesajı da son kez güncelle
+                if archive_channel and active_duty.get("archive_message_id"):
+                    try:
+                        archive_message = await archive_channel.fetch_message(active_duty["archive_message_id"])
+                        archive_final_embed = discord.Embed(
+                            title=final_embed.title,
+                            description=final_description,
+                            color=discord.Color.gold()
+                        )
+                        archive_final_embed.add_field(name="Tablist Started (1)", value=f"[Link]({active_duty['image1_url']})", inline=False)
+                        archive_final_embed.add_field(name="Duty Image (2)", value=f"[Link]({active_duty['image2_url']})", inline=False)
+                        archive_final_embed.add_field(name="Tablist Ended (3)", value=f"[Link]({active_duty['image3_url']})", inline=False)
+                        if final_embed.footer:
+                            archive_final_embed.set_footer(text=final_embed.footer.text)
+                        
+                        await archive_message.edit(embed=archive_final_embed)
+                    except discord.NotFound:
+                        print(f"Archive message not found for completed duty {active_duty['id']}")
+                    except Exception as e:
+                        print(f"Error updating final archive embed: {e}")
 
                 # Kanal mesajını silmeden önce ID'sini alalım
                 status_message_to_delete_id = active_duty.get("status_message_id")
@@ -498,10 +555,10 @@ class General(commands.Cog):
                 duty_format = f"""
 Username: {active_duty['user_name']}
 Duty: {active_duty['duty_title']}
-{active_duty['image1_url']}
+{active_duty['image2_url']}
 
 Time Started: {active_duty['time_started']}
-Tablist Started: {active_duty['image2_url']}
+Tablist Started: {active_duty['image1_url']}
 
 Time Ended: {active_duty['time_ended']}
 Tablist Ended: {active_duty['image3_url']}
@@ -511,14 +568,7 @@ Tablist Ended: {active_duty['image3_url']}
                 try:
                     dm_message_content = f"Your duty submission:\n```{duty_format}```"
                     sent_dm_message = await message.author.send(content=dm_message_content)
-                    delete_dm_button = discord.ui.Button(
-                        label="Delete This Summary", 
-                        style=discord.ButtonStyle.danger, 
-                        custom_id=f"duty_delete_dm_{message.author.id}_{sent_dm_message.id}"
-                    )
-                    dm_view.add_item(delete_dm_button)
                     await sent_dm_message.edit(view=dm_view)
-                    # active_duty["final_dm_message_id"] = sent_dm_message.id # Bu satır artık gerekmeyebilir
                 except discord.Forbidden:
                     await message.channel.send(f"{message.author.mention}, I couldn't DM you the duty summary. Please check your DMs.", delete_after=30)
                 except Exception as e:
@@ -1005,7 +1055,7 @@ Tablist Ended: {active_duty['image3_url']}
 
         embed = discord.Embed(
             title="Waffle Duty State Maker",
-            description="Please use the buttons below to setup and edit your duty information. You can not use this feature without setting up your informations. To see the supported timezones, click the \"Supported Timezones\" button. To start a duty, just send your images in the order shown below.\n 1) Duty Image\n 2) Tablist Started Image\n 3) Tablist Ended Image\n\nIf you need more help, please contact the server Bot Manager. Also if you want to report a bug, please contact the server Bot Manager.",
+            description="Please use the buttons below to setup and edit your duty information. You can not use this feature without setting up your informations. To see the supported timezones, click the \"Supported Timezones\" button. To start a duty, just send your images in the order shown below:\n 1) Tablist Started Image\n 2) Duty Image\n 3) Tablist Ended Image\n\nIf you need more help, please contact the server Bot Manager. Also if you want to report a bug, please contact the server Bot Manager.",
             color=discord.Color.blurple()
         )
         # embed.add_field(name="", value="• Duty Image\n• Tablist Started Image\n• Tablist Ended Image", inline=False)
