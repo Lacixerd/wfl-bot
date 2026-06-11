@@ -1,0 +1,14 @@
+services:
+  wfl-bot:
+    image: ${DOCKER_IMAGE:-wfl-bot:latest}
+    container_name: wfl-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./sqlite3.db:/app/sqlite3.db
+      - ./configs.json:/app/configs.json
+      - ./bad_words.json:/app/bad_words.json
+      - bot-logs:/app/logs
+volumes:
+  bot-logs:
