@@ -1,4 +1,6 @@
+# pyrefly: ignore [missing-import]
 import discord
+# pyrefly: ignore [missing-import]
 from discord import app_commands
 from discord.ext import commands
 import asyncio
@@ -3130,6 +3132,131 @@ class Admin(commands.Cog):
             else:
                 await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
 
+    # ───────────────────────────────────────────────────────────────
+    #  VOTE SYSTEM COMMANDS
+    # ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="setupvote",
+        description="Set the role required to use vote buttons. Admins only.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def setupvote(self, interaction: discord.Interaction, role: discord.Role):
+        """Save the vote-restricted role for this guild in configs.json."""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild.id)
+
+        configs = {}
+        if os.path.exists('configs.json'):
+            with open('configs.json', 'r') as f:
+                configs = json.load(f)
+
+        if 'vote' not in configs:
+            configs['vote'] = {}
+        if 'guilds' not in configs['vote']:
+            configs['vote']['guilds'] = {}
+
+        configs['vote']['guilds'][guild_id] = {
+            'role_id': role.id,
+            'role_name': role.name,
+        }
+
+        with open('configs.json', 'w') as f:
+            json.dump(configs, f, indent=4)
+
+        embed = discord.Embed(
+            title="✅ Vote System Configured",
+            description=f"Only members with the {role.mention} role will be able to interact with vote embeds.",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Role", value=f"{role.mention} (`{role.id}`)", inline=True)
+        embed.set_footer(text=f"Configured by {interaction.user.display_name}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="makevote",
+        description="Open a form to create a vote embed. Admins only.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def makevote(
+        self,
+        interaction: discord.Interaction,
+        max_votes: int = None,
+    ):
+        """
+        Open the VoteModal so an admin can create a vote embed.
+
+        Parameters
+        -----------
+        max_votes: Automatically end the vote when total votes reach this number. Leave empty for manual end.
+        """
+        guild_id = str(interaction.guild.id)
+
+        vote_role_id = None
+        if os.path.exists('configs.json'):
+            with open('configs.json', 'r') as f:
+                configs = json.load(f)
+            vote_role_id = (
+                configs
+                .get('vote', {})
+                .get('guilds', {})
+                .get(guild_id, {})
+                .get('role_id')
+            )
+
+        modal = VoteModal(vote_role_id=vote_role_id, max_votes=max_votes)
+        await interaction.response.send_modal(modal)
+
+    @app_commands.command(
+        name="endvote",
+        description="Manually end an active vote by its ID. Admins only.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def endvote(self, interaction: discord.Interaction, vote_id: str):
+        """
+        Manually end a vote and display final results.
+
+        Parameters
+        -----------
+        vote_id: The vote ID shown in the embed footer (e.g. VOTE-AB12CD).
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        vote_id = vote_id.upper().strip()
+        vote_data = _votes.get(vote_id)
+
+        if not vote_data:
+            return await interaction.followup.send(
+                f"❌ No vote found with ID **{vote_id}**. Make sure you copied it correctly.",
+                ephemeral=True,
+            )
+
+        if vote_data['is_ended']:
+            return await interaction.followup.send(
+                f"⚠️ Vote **{vote_id}** has already ended.", ephemeral=True
+            )
+
+        # Only allow ending votes in the same guild
+        if vote_data['guild_id'] != interaction.guild.id:
+            return await interaction.followup.send(
+                "❌ This vote does not belong to this server.", ephemeral=True
+            )
+
+        success = await _finalize_vote(vote_id, self.bot)
+        if success:
+            await interaction.followup.send(
+                f"✅ Vote **{vote_id}** has been ended.", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"❌ Could not end vote **{vote_id}**. The message may have been deleted.",
+                ephemeral=True,
+            )
+
 class EmbedModal(discord.ui.Modal, title='Create Embed Message'):
     def __init__(self, target_channel):
         super().__init__()
@@ -3445,6 +3572,7 @@ class EditEmbedModal(discord.ui.Modal, title='Edit Embed Message'):
 
     async def get_modlog_channel(self, guild):
         """Get the configured modlog channel for a guild"""
+
         try:
             # Check if config file exists
             if not os.path.exists('configs.json'):
@@ -3468,6 +3596,355 @@ class EditEmbedModal(discord.ui.Modal, title='Edit Embed Message'):
         except Exception as e:
             print(f"Error getting modlog channel: {e}")
             return None
+
+
+# ─────────────────────────────────────────────
+#  VOTE SYSTEM – helper classes (outside cog)
+# ─────────────────────────────────────────────
+
+class VoteModal(discord.ui.Modal, title="Create Vote"):
+    """Modal that collects vote details and posts the vote embed."""
+
+    username_input = discord.ui.TextInput(
+        label="Username",
+        placeholder="e.g. Lacixerd",
+        max_length=100,
+        required=True,
+    )
+    description_input = discord.ui.TextInput(
+        label="Description",
+        placeholder="What is this vote about?",
+        style=discord.TextStyle.paragraph,
+        max_length=1024,
+        required=True,
+    )
+    extra_info_input = discord.ui.TextInput(
+        label="Any Extra Info (optional)",
+        placeholder="Additional notes, links, etc.",
+        style=discord.TextStyle.paragraph,
+        max_length=1024,
+        required=False,
+    )
+
+    def __init__(self, vote_role_id: int | None, max_votes: int | None = None):
+        super().__init__()
+        self.vote_role_id = vote_role_id
+        self.max_votes = max_votes
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        # Generate a unique vote ID
+        vote_id = _generate_vote_id()
+
+        # Build footer text
+        footer_parts = [f"Started by {interaction.user.display_name}"]
+        if self.vote_role_id:
+            role = interaction.guild.get_role(self.vote_role_id)
+            if role:
+                footer_parts.append(f"Restricted to: {role.name}")
+        if self.max_votes:
+            footer_parts.append(f"Auto-ends at {self.max_votes} total votes")
+        footer_parts.append(f"ID: {vote_id}")
+
+        # Build the vote embed
+        embed = discord.Embed(
+            title="🗳️ Vote",
+            color=discord.Color.from_rgb(88, 101, 242),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="👤 Subject", value=self.username_input.value, inline=False)
+        embed.add_field(name="📋 Description", value=self.description_input.value, inline=False)
+
+        if self.extra_info_input.value.strip():
+            embed.add_field(name="ℹ️ Extra Info", value=self.extra_info_input.value.strip(), inline=False)
+
+        embed.add_field(
+            name="Votes",
+            value="✅ **Favor:** 0  |  ❌ **Deny:** 0  |  ⚪ **Neutral:** 0",
+            inline=False,
+        )
+        embed.set_footer(text=" • ".join(footer_parts))
+
+        view = VoteView(vote_role_id=self.vote_role_id)
+
+        # Send the vote publicly in the channel
+        channel = interaction.channel
+        role_mention = ""
+        if self.vote_role_id:
+            role = interaction.guild.get_role(self.vote_role_id)
+            if role:
+                role_mention = f"Only {role.mention} members can vote."
+
+        if role_mention:
+            sent_msg = await channel.send(content=role_mention, embed=embed, view=view)
+        else:
+            sent_msg = await channel.send(embed=embed, view=view)
+
+        # Register vote in the global tracker
+        _votes[vote_id] = {
+            'message_id': sent_msg.id,
+            'channel_id': channel.id,
+            'guild_id': interaction.guild.id,
+            'max_votes': self.max_votes,
+            'is_ended': False,
+            'vote_role_id': self.vote_role_id,
+            'votes': {},   # user_id -> vote_type
+        }
+        _msg_to_vote_id[sent_msg.id] = vote_id
+
+        await interaction.followup.send(
+            f"✅ Vote created! ID: **{vote_id}**" +
+            (f" — auto-ends at **{self.max_votes}** total votes." if self.max_votes else " — use `/endvote {vote_id}` to end it manually."),
+            ephemeral=True,
+        )
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        try:
+            await interaction.followup.send(f"An error occurred: {error}", ephemeral=True)
+        except Exception:
+            pass
+
+
+class VoteView(discord.ui.View):
+    """Persistent view that holds the Favor / Deny / Neutral buttons."""
+
+    def __init__(self, vote_role_id: int | None = None):
+        super().__init__(timeout=None)
+        self.vote_role_id = vote_role_id
+
+    def _check_role(self, interaction: discord.Interaction) -> bool:
+        """Return True if the user is allowed to vote."""
+        if not self.vote_role_id:
+            return True
+        return any(r.id == self.vote_role_id for r in interaction.user.roles)
+
+    def _parse_counts(self, embed: discord.Embed):
+        """Extract current favor/deny/neutral counts from the embed field."""
+        for field in embed.fields:
+            if field.name == "Votes":
+                import re
+                favor  = int(re.search(r"Favor:\*\* (\d+)", field.value).group(1))
+                deny   = int(re.search(r"Deny:\*\* (\d+)",  field.value).group(1))
+                neutral= int(re.search(r"Neutral:\*\* (\d+)", field.value).group(1))
+                return favor, deny, neutral
+        return 0, 0, 0
+
+    def _build_votes_text(self, favor: int, deny: int, neutral: int) -> str:
+        return f"✅ **Favor:** {favor}  |  ❌ **Deny:** {deny}  |  ⚪ **Neutral:** {neutral}"
+
+    async def _handle_vote(
+        self,
+        interaction: discord.Interaction,
+        vote_type: str,
+    ):
+        # Role check
+        if not self._check_role(interaction):
+            role = interaction.guild.get_role(self.vote_role_id)
+            role_name = role.name if role else "the required role"
+            return await interaction.response.send_message(
+                f"❌ You need the **{role_name}** role to vote.", ephemeral=True
+            )
+
+        msg = interaction.message
+        vote_id = _msg_to_vote_id.get(msg.id)
+
+        # Fallback if bot was restarted (no in-memory data)
+        if not vote_id or vote_id not in _votes:
+            return await interaction.response.send_message(
+                "⚠️ Vote data not found. The bot may have restarted — this vote can no longer track results.",
+                ephemeral=True,
+            )
+
+        vote_data = _votes[vote_id]
+
+        if vote_data['is_ended']:
+            return await interaction.response.send_message(
+                "🔒 This vote has already ended.", ephemeral=True
+            )
+
+        votes_dict = vote_data['votes']
+        previous = votes_dict.get(interaction.user.id)
+
+        if previous == vote_type:
+            del votes_dict[interaction.user.id]
+            action_text = f"You removed your **{vote_type}** vote."
+        else:
+            votes_dict[interaction.user.id] = vote_type
+            action_text = f"You voted **{vote_type}**."
+
+        # Recount
+        favor   = sum(1 for v in votes_dict.values() if v == "Favor")
+        deny    = sum(1 for v in votes_dict.values() if v == "Deny")
+        neutral = sum(1 for v in votes_dict.values() if v == "Neutral")
+        total   = favor + deny + neutral
+
+        # Build updated embed
+        embed = msg.embeds[0]
+        new_embed = discord.Embed(
+            title=embed.title,
+            description=embed.description,
+            color=embed.color,
+            timestamp=embed.timestamp,
+        )
+        if embed.footer and embed.footer.text:
+            new_embed.set_footer(text=embed.footer.text, icon_url=embed.footer.icon_url)
+        if embed.thumbnail and embed.thumbnail.url:
+            new_embed.set_thumbnail(url=embed.thumbnail.url)
+        if embed.image and embed.image.url:
+            new_embed.set_image(url=embed.image.url)
+        if embed.author and embed.author.name:
+            new_embed.set_author(
+                name=embed.author.name,
+                url=embed.author.url,
+                icon_url=embed.author.icon_url,
+            )
+        for field in embed.fields:
+            if field.name == "Votes":
+                new_embed.add_field(
+                    name="Votes",
+                    value=self._build_votes_text(favor, deny, neutral),
+                    inline=False,
+                )
+            else:
+                new_embed.add_field(name=field.name, value=field.value, inline=field.inline)
+
+        # Check auto-end condition
+        max_votes = vote_data.get('max_votes')
+        if max_votes and total >= max_votes:
+            # Auto-end: mark ended and show disabled view
+            vote_data['is_ended'] = True
+            new_embed.title = "🔒 Vote (Ended)"
+            new_embed.color = discord.Color.greyple()
+            ended_view = _make_disabled_view()
+            await interaction.response.edit_message(embed=new_embed, view=ended_view)
+            await interaction.followup.send(
+                f"✅ You voted **{vote_type}**. The vote has automatically ended — **{total}** total votes reached!",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.edit_message(embed=new_embed, view=self)
+            await interaction.followup.send(action_text, ephemeral=True)
+
+    @discord.ui.button(label="Favor", style=discord.ButtonStyle.success, custom_id="vote_favor")
+    async def favor_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_vote(interaction, "Favor")
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, custom_id="vote_deny")
+    async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_vote(interaction, "Deny")
+
+    @discord.ui.button(label="Neutral", style=discord.ButtonStyle.secondary, custom_id="vote_neutral")
+    async def neutral_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_vote(interaction, "Neutral")
+
+
+# ─────────────────────────────────────────────
+#  VOTE SYSTEM – module-level data & helpers
+# ─────────────────────────────────────────────
+import string
+import random
+
+# vote_id -> {
+#   message_id, channel_id, guild_id,
+#   max_votes (int|None), is_ended (bool),
+#   vote_role_id (int|None),
+#   votes: {user_id -> "Favor"|"Deny"|"Neutral"}
+# }
+_votes: dict[str, dict] = {}
+
+# message_id -> vote_id  (quick reverse lookup)
+_msg_to_vote_id: dict[int, str] = {}
+
+
+def _generate_vote_id() -> str:
+    """Return a unique 6-character uppercase alphanumeric ID prefixed with VOTE-."""
+    chars = string.ascii_uppercase + string.digits
+    while True:
+        candidate = 'VOTE-' + ''.join(random.choices(chars, k=6))
+        if candidate not in _votes:
+            return candidate
+
+
+def _make_disabled_view() -> discord.ui.View:
+    """Return a view with all vote buttons disabled (used when a vote ends)."""
+    view = discord.ui.View(timeout=None)
+    for label, style, cid in [
+        ("Favor",   discord.ButtonStyle.success,   "vote_favor_done"),
+        ("Deny",    discord.ButtonStyle.danger,    "vote_deny_done"),
+        ("Neutral", discord.ButtonStyle.secondary, "vote_neutral_done"),
+    ]:
+        btn = discord.ui.Button(label=label, style=style, custom_id=cid, disabled=True)
+        view.add_item(btn)
+    return view
+
+
+async def _finalize_vote(vote_id: str, bot) -> bool:
+    """
+    Mark a vote as ended, edit its Discord message to show final results
+    with disabled buttons and a greyed-out embed.
+    Returns True on success, False if the message could not be found.
+    """
+    vote_data = _votes.get(vote_id)
+    if not vote_data or vote_data['is_ended']:
+        return False
+
+    vote_data['is_ended'] = True
+
+    try:
+        channel = bot.get_channel(vote_data['channel_id'])
+        if channel is None:
+            return False
+        msg = await channel.fetch_message(vote_data['message_id'])
+    except (discord.NotFound, discord.Forbidden):
+        return False
+
+    if not msg.embeds:
+        return False
+
+    embed = msg.embeds[0]
+    votes_dict = vote_data['votes']
+    favor   = sum(1 for v in votes_dict.values() if v == "Favor")
+    deny    = sum(1 for v in votes_dict.values() if v == "Deny")
+    neutral = sum(1 for v in votes_dict.values() if v == "Neutral")
+
+    # Rebuild embed with "Ended" indicator
+    new_embed = discord.Embed(
+        title="🔒 Vote (Ended)",
+        description=embed.description,
+        color=discord.Color.greyple(),
+        timestamp=embed.timestamp,
+    )
+    if embed.footer and embed.footer.text:
+        new_embed.set_footer(text=embed.footer.text, icon_url=embed.footer.icon_url)
+    if embed.thumbnail and embed.thumbnail.url:
+        new_embed.set_thumbnail(url=embed.thumbnail.url)
+    if embed.image and embed.image.url:
+        new_embed.set_image(url=embed.image.url)
+    if embed.author and embed.author.name:
+        new_embed.set_author(
+            name=embed.author.name,
+            url=embed.author.url,
+            icon_url=embed.author.icon_url,
+        )
+
+    for field in embed.fields:
+        if field.name == "Votes":
+            total = favor + deny + neutral
+            new_embed.add_field(
+                name="Final Results",
+                value=(
+                    f"✅ **Favor:** {favor}  |  ❌ **Deny:** {deny}  |  ⚪ **Neutral:** {neutral}\n"
+                    f"Total: **{total}** vote{'s' if total != 1 else ''}"
+                ),
+                inline=False,
+            )
+        else:
+            new_embed.add_field(name=field.name, value=field.value, inline=field.inline)
+
+    await msg.edit(embed=new_embed, view=_make_disabled_view())
+    return True
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))

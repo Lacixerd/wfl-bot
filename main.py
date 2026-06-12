@@ -45,12 +45,12 @@ class Bot(commands.Bot):
         for folder in ['general', 'admin', 'utils', 'roblox']:
             await self.load_extension(f'commands.{folder}.{folder}')
         
-        print("Syncing slash commands...")
+        print("Syncing slash commands (global)...")
         try:
             synced = await self.tree.sync()
-            print(f"Synced {len(synced)} command(s)")
+            print(f"Synced {len(synced)} global command(s)")
         except Exception as e:
-            print(f"Failed to sync commands: {e}")
+            print(f"Failed to sync global commands: {e}")
 
 bot = Bot()
 
@@ -59,9 +59,16 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
     print(f'Bot is ready in {len(bot.guilds)} guild(s)')
 
-    await bot.tree.sync()
+    # Guild-specific sync → commands appear instantly (no cache delay)
+    for guild in bot.guilds:
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            guild_synced = await bot.tree.sync(guild=guild)
+            print(f"Guild sync OK [{guild.name}]: {len(guild_synced)} command(s)")
+        except Exception as e:
+            print(f"Guild sync failed [{guild.name}]: {e}")
+
     print("Forcefully synced commands")
-    
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="Waffle Crunch"))
 
 def get_join_leave_channel(guild):

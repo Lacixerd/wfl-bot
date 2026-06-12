@@ -1,6 +1,9 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Çalışma dizini
+# Python output'u buffer'lamadan direkt gönder (docker logs için)
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Bağımlılıkları önce kopyala (cache optimizasyonu)
