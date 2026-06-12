@@ -555,7 +555,7 @@ class Utils(commands.Cog):
         embed.add_field(name="Started At", value=f"<t:{int(self.start_time.timestamp())}:F>", inline=False)
         
         # Add bot version and other optional details
-        embed.add_field(name="Bot Version", value="1.2.0", inline=True)
+        embed.add_field(name="Bot Version", value="2.1.0", inline=True)
         embed.add_field(name="Discord.py Version", value=discord.__version__, inline=True)
         
         await interaction.response.send_message(embed=embed)

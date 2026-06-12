@@ -10,7 +10,9 @@ import json
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", 0))
 print(f"Token: {TOKEN}")
+print(f"Owner ID: {BOT_OWNER_ID}")
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 intents = discord.Intents.default()
@@ -38,13 +40,60 @@ def contains_bad_word(message_content, bad_words):
 
 class Bot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix='/', intents=intents)
+        super().__init__(
+            command_prefix='/',
+            intents=intents,
+            owner_id=BOT_OWNER_ID
+        )
         
     async def setup_hook(self):
         print("Loading extensions...")
         for folder in ['general', 'admin', 'utils', 'roblox']:
             await self.load_extension(f'commands.{folder}.{folder}')
         
+        # Global app_commands error handler: bot owner bypasses all permission checks
+        @self.tree.error
+        async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+            # If the error is a permission/check failure, check if user is the bot owner
+            if isinstance(error, (app_commands.MissingPermissions, app_commands.CheckFailure, app_commands.MissingRole)):
+                if interaction.user.id == BOT_OWNER_ID:
+                    # Re-invoke the command callback directly, bypassing all checks
+                    command = interaction.command
+                    if command is not None:
+                        try:
+                            # Call callback directly with the resolved kwargs,
+                            # bypassing all checks. Do NOT defer here — let the
+                            # command handle its own response (it may defer, send, etc.)
+                            kwargs = vars(interaction.namespace)
+                            if command.binding is not None:
+                                await command.callback(command.binding, interaction, **kwargs)
+                            else:
+                                await command.callback(interaction, **kwargs)
+                            return
+                        except Exception as e:
+                            if not interaction.response.is_done():
+                                await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+                            else:
+                                await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+                            return
+            # Default error handling
+            if isinstance(error, app_commands.MissingPermissions):
+                perms = ', '.join(error.missing_permissions)
+                msg = f"❌ You don't have the required permissions: `{perms}`"
+            elif isinstance(error, app_commands.MissingRole):
+                msg = f"❌ You are missing a required role."
+            elif isinstance(error, app_commands.BotMissingPermissions):
+                perms = ', '.join(error.missing_permissions)
+                msg = f"❌ I'm missing the required permissions: `{perms}`"
+            elif isinstance(error, app_commands.CommandOnCooldown):
+                msg = f"⏳ This command is on cooldown. Try again in `{error.retry_after:.1f}s`."
+            else:
+                msg = f"❌ An error occurred: {error}"
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(msg, ephemeral=True)
+
         print("Syncing slash commands (global)...")
         try:
             synced = await self.tree.sync()
