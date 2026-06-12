@@ -9,6 +9,7 @@ services:
       - ./sqlite3.db:/app/sqlite3.db
       - ./configs.json:/app/configs.json
       - ./bad_words.json:/app/bad_words.json
+      - ./servers.json:/app/servers.json
       - bot-logs:/app/logs
 volumes:
   bot-logs:

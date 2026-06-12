@@ -31,6 +31,19 @@ def load_bad_words():
         print(f"Error loading bad words: {e}")
         return []
 
+def load_allowed_guilds():
+    """servers.json dosyasından izin verilen sunucu ID'lerini yükler."""
+    try:
+        with open('servers.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return set(str(gid) for gid in data.get('allowed_guild_ids', []))
+    except FileNotFoundError:
+        print("servers.json file not found!")
+        return set()
+    except Exception as e:
+        print(f"Error loading servers.json: {e}")
+        return set()
+
 def contains_bad_word(message_content, bad_words):
     message_lower = message_content.lower()
     for bad_word in bad_words:
@@ -108,6 +121,26 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
     print(f'Bot is ready in {len(bot.guilds)} guild(s)')
 
+    # Whitelist kontrolü — izin verilmeyen sunuculardan ayrıl
+    allowed_guilds = load_allowed_guilds()
+    guilds_to_leave = [g for g in bot.guilds if str(g.id) not in allowed_guilds]
+    for guild in guilds_to_leave:
+        print(f"⛔ Unauthorized server detected: {guild.name} ({guild.id}) — leaving.")
+        try:
+            # Sunucuya uyarı mesajı göndermeye çalış
+            channel = next(
+                (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+                None
+            )
+            if channel:
+                await channel.send(
+                    "⛔ This bot only works in authorized servers. "
+                    "The bot is leaving because your server is not on the whitelist."
+                )
+        except Exception:
+            pass
+        await guild.leave()
+
     # Guild-specific sync → commands appear instantly (no cache delay)
     for guild in bot.guilds:
         try:
@@ -119,6 +152,28 @@ async def on_ready():
 
     print("Forcefully synced commands")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="Waffle Crunch"))
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Bot yeni bir sunucuya eklendiğinde whitelist kontrolü yapar."""
+    allowed_guilds = load_allowed_guilds()
+    if str(guild.id) not in allowed_guilds:
+        print(f"⛔ Unauthorized server detected: {guild.name} ({guild.id}) — leaving.")
+        try:
+            channel = next(
+                (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+                None
+            )
+            if channel:
+                await channel.send(
+                    "⛔ This bot only works in authorized servers. "
+                    "The bot is leaving because your server is not on the whitelist."
+                )
+        except Exception:
+            pass
+        await guild.leave()
+    else:
+        print(f"✅ Yetkili sunucuya katıldı: {guild.name} ({guild.id})") 
 
 def get_join_leave_channel(guild):
     try:
