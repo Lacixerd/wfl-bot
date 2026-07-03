@@ -3838,6 +3838,63 @@ class VoteView(discord.ui.View):
     async def neutral_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_vote(interaction, "Neutral")
 
+    @discord.ui.button(label="👁 View Votes", style=discord.ButtonStyle.primary, custom_id="vote_view_votes")
+    async def view_votes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Show a detailed breakdown of votes. Only available to users with the configured vote role."""
+        # Role check
+        if not self._check_role(interaction):
+            role = interaction.guild.get_role(self.vote_role_id)
+            role_name = role.name if role else "the required role"
+            return await interaction.response.send_message(
+                f"❌ You need the **{role_name}** role to view the votes.", ephemeral=True
+            )
+
+        msg = interaction.message
+        vote_id = _msg_to_vote_id.get(msg.id)
+
+        if not vote_id or vote_id not in _votes:
+            return await interaction.response.send_message(
+                "⚠️ Vote data not found. The bot may have restarted — detailed vote data is unavailable.",
+                ephemeral=True,
+            )
+
+        vote_data = _votes[vote_id]
+        votes_dict = vote_data['votes']
+
+        favor_users   = [uid for uid, v in votes_dict.items() if v == "Favor"]
+        deny_users    = [uid for uid, v in votes_dict.items() if v == "Deny"]
+        neutral_users = [uid for uid, v in votes_dict.items() if v == "Neutral"]
+        total = len(votes_dict)
+
+        def fmt_users(uids):
+            if not uids:
+                return "*None*"
+            return "\n".join(f"<@{uid}>" for uid in uids)
+
+        result_embed = discord.Embed(
+            title=f"📊 Vote Details — {vote_id}",
+            color=discord.Color.blurple(),
+            timestamp=discord.utils.utcnow(),
+        )
+        result_embed.add_field(
+            name=f"✅ Favor ({len(favor_users)})",
+            value=fmt_users(favor_users),
+            inline=True,
+        )
+        result_embed.add_field(
+            name=f"❌ Deny ({len(deny_users)})",
+            value=fmt_users(deny_users),
+            inline=True,
+        )
+        result_embed.add_field(
+            name=f"⚪ Neutral ({len(neutral_users)})",
+            value=fmt_users(neutral_users),
+            inline=True,
+        )
+        result_embed.set_footer(text=f"Total votes: {total} • Only visible to you")
+
+        await interaction.response.send_message(embed=result_embed, ephemeral=True)
+
 
 # ─────────────────────────────────────────────
 #  VOTE SYSTEM – module-level data & helpers
@@ -3873,6 +3930,7 @@ def _make_disabled_view() -> discord.ui.View:
         ("Favor",   discord.ButtonStyle.success,   "vote_favor_done"),
         ("Deny",    discord.ButtonStyle.danger,    "vote_deny_done"),
         ("Neutral", discord.ButtonStyle.secondary, "vote_neutral_done"),
+        ("👁 View Votes", discord.ButtonStyle.primary, "vote_view_votes_done"),
     ]:
         btn = discord.ui.Button(label=label, style=style, custom_id=cid, disabled=True)
         view.add_item(btn)
