@@ -3157,21 +3157,60 @@ class Admin(commands.Cog):
             configs['vote'] = {}
         if 'guilds' not in configs['vote']:
             configs['vote']['guilds'] = {}
+        if guild_id not in configs['vote']['guilds']:
+            configs['vote']['guilds'][guild_id] = {}
 
-        configs['vote']['guilds'][guild_id] = {
-            'role_id': role.id,
-            'role_name': role.name,
-        }
+        configs['vote']['guilds'][guild_id]['role_id'] = role.id
+        configs['vote']['guilds'][guild_id]['role_name'] = role.name
 
         with open('configs.json', 'w') as f:
             json.dump(configs, f, indent=4)
 
         embed = discord.Embed(
-            title="✅ Vote System Configured",
-            description=f"Only members with the {role.mention} role will be able to interact with vote embeds.",
+            title="✅ Vote Role Configured",
+            description=f"Only members with the {role.mention} role will be able to use vote buttons.",
             color=discord.Color.green(),
         )
-        embed.add_field(name="Role", value=f"{role.mention} (`{role.id}`)", inline=True)
+        embed.add_field(name="Vote Role", value=f"{role.mention} (`{role.id}`)", inline=True)
+        embed.set_footer(text=f"Configured by {interaction.user.display_name}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="setupvote_view",
+        description="Set the role that can see detailed vote results. Admins only.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def setupvote_view(self, interaction: discord.Interaction, role: discord.Role):
+        """Save the view-only role for vote results in configs.json."""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild.id)
+
+        configs = {}
+        if os.path.exists('configs.json'):
+            with open('configs.json', 'r') as f:
+                configs = json.load(f)
+
+        if 'vote' not in configs:
+            configs['vote'] = {}
+        if 'guilds' not in configs['vote']:
+            configs['vote']['guilds'] = {}
+        if guild_id not in configs['vote']['guilds']:
+            configs['vote']['guilds'][guild_id] = {}
+
+        configs['vote']['guilds'][guild_id]['view_role_id'] = role.id
+        configs['vote']['guilds'][guild_id]['view_role_name'] = role.name
+
+        with open('configs.json', 'w') as f:
+            json.dump(configs, f, indent=4)
+
+        embed = discord.Embed(
+            title="✅ Vote View Role Configured",
+            description=f"Only members with the {role.mention} role will be able to see detailed vote results.",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="View Role", value=f"{role.mention} (`{role.id}`)", inline=True)
         embed.set_footer(text=f"Configured by {interaction.user.display_name}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -3196,18 +3235,15 @@ class Admin(commands.Cog):
         guild_id = str(interaction.guild.id)
 
         vote_role_id = None
+        view_role_id = None
         if os.path.exists('configs.json'):
             with open('configs.json', 'r') as f:
                 configs = json.load(f)
-            vote_role_id = (
-                configs
-                .get('vote', {})
-                .get('guilds', {})
-                .get(guild_id, {})
-                .get('role_id')
-            )
+            guild_vote_cfg = configs.get('vote', {}).get('guilds', {}).get(guild_id, {})
+            vote_role_id = guild_vote_cfg.get('role_id')
+            view_role_id = guild_vote_cfg.get('view_role_id')
 
-        modal = VoteModal(vote_role_id=vote_role_id, max_votes=max_votes)
+        modal = VoteModal(vote_role_id=vote_role_id, view_role_id=view_role_id, max_votes=max_votes)
         await interaction.response.send_modal(modal)
 
     @app_commands.command(
@@ -3626,9 +3662,10 @@ class VoteModal(discord.ui.Modal, title="Create Vote"):
         required=False,
     )
 
-    def __init__(self, vote_role_id: int | None, max_votes: int | None = None):
+    def __init__(self, vote_role_id: int | None, view_role_id: int | None = None, max_votes: int | None = None):
         super().__init__()
         self.vote_role_id = vote_role_id
+        self.view_role_id = view_role_id
         self.max_votes = max_votes
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -3666,7 +3703,7 @@ class VoteModal(discord.ui.Modal, title="Create Vote"):
         )
         embed.set_footer(text=" • ".join(footer_parts))
 
-        view = VoteView(vote_role_id=self.vote_role_id)
+        view = VoteView(vote_role_id=self.vote_role_id, view_role_id=self.view_role_id)
 
         # Send the vote publicly in the channel
         channel = interaction.channel
@@ -3689,6 +3726,7 @@ class VoteModal(discord.ui.Modal, title="Create Vote"):
             'max_votes': self.max_votes,
             'is_ended': False,
             'vote_role_id': self.vote_role_id,
+            'view_role_id': self.view_role_id,
             'votes': {},   # user_id -> vote_type
         }
         _msg_to_vote_id[sent_msg.id] = vote_id
@@ -3709,15 +3747,22 @@ class VoteModal(discord.ui.Modal, title="Create Vote"):
 class VoteView(discord.ui.View):
     """Persistent view that holds the Favor / Deny / Neutral buttons."""
 
-    def __init__(self, vote_role_id: int | None = None):
+    def __init__(self, vote_role_id: int | None = None, view_role_id: int | None = None):
         super().__init__(timeout=None)
         self.vote_role_id = vote_role_id
+        self.view_role_id = view_role_id
 
     def _check_role(self, interaction: discord.Interaction) -> bool:
         """Return True if the user is allowed to vote."""
         if not self.vote_role_id:
             return True
         return any(r.id == self.vote_role_id for r in interaction.user.roles)
+
+    def _check_view_role(self, interaction: discord.Interaction) -> bool:
+        """Return True if the user is allowed to view detailed vote results."""
+        if not self.view_role_id:
+            return True
+        return any(r.id == self.view_role_id for r in interaction.user.roles)
 
     def _parse_counts(self, embed: discord.Embed):
         """Extract current favor/deny/neutral counts from the embed field."""
@@ -3840,10 +3885,10 @@ class VoteView(discord.ui.View):
 
     @discord.ui.button(label="👁 View Votes", style=discord.ButtonStyle.primary, custom_id="vote_view_votes")
     async def view_votes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Show a detailed breakdown of votes. Only available to users with the configured vote role."""
-        # Role check
-        if not self._check_role(interaction):
-            role = interaction.guild.get_role(self.vote_role_id)
+        """Show a detailed breakdown of votes. Only available to users with the configured view role."""
+        # View role check (separate from voting role)
+        if not self._check_view_role(interaction):
+            role = interaction.guild.get_role(self.view_role_id)
             role_name = role.name if role else "the required role"
             return await interaction.response.send_message(
                 f"❌ You need the **{role_name}** role to view the votes.", ephemeral=True
