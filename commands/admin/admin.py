@@ -3176,7 +3176,7 @@ class Admin(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(
-        name="setupvote_view",
+        name="setupvoteview",
         description="Set the role that can see detailed vote results. Admins only.",
     )
     @app_commands.default_permissions(administrator=True)
@@ -3857,11 +3857,14 @@ class VoteView(discord.ui.View):
         # Check auto-end condition
         max_votes = vote_data.get('max_votes')
         if max_votes and total >= max_votes:
-            # Auto-end: mark ended and show disabled view
+            # Auto-end: mark ended and show ended view (View Votes still active)
             vote_data['is_ended'] = True
             new_embed.title = "🔒 Vote (Ended)"
             new_embed.color = discord.Color.greyple()
-            ended_view = _make_disabled_view()
+            ended_view = _make_ended_view(
+                vote_role_id=vote_data.get('vote_role_id'),
+                view_role_id=vote_data.get('view_role_id'),
+            )
             await interaction.response.edit_message(embed=new_embed, view=ended_view)
             await interaction.followup.send(
                 f"✅ You voted **{vote_type}**. The vote has automatically ended — **{total}** total votes reached!",
@@ -3969,7 +3972,7 @@ def _generate_vote_id() -> str:
 
 
 def _make_disabled_view() -> discord.ui.View:
-    """Return a view with all vote buttons disabled (used when a vote ends)."""
+    """Return a view with ALL vote buttons disabled (legacy, kept for safety)."""
     view = discord.ui.View(timeout=None)
     for label, style, cid in [
         ("Favor",   discord.ButtonStyle.success,   "vote_favor_done"),
@@ -3980,6 +3983,153 @@ def _make_disabled_view() -> discord.ui.View:
         btn = discord.ui.Button(label=label, style=style, custom_id=cid, disabled=True)
         view.add_item(btn)
     return view
+
+
+class VoteEndedView(discord.ui.View):
+    """
+    View shown after a vote ends.
+    Favor/Deny/Neutral are disabled; View Votes remains active for authorized users.
+    """
+
+    def __init__(self, vote_role_id: int | None = None, view_role_id: int | None = None):
+        super().__init__(timeout=None)
+        self.vote_role_id = vote_role_id
+        self.view_role_id = view_role_id
+
+    def _check_view_role(self, interaction: discord.Interaction) -> bool:
+        if not self.view_role_id:
+            return True
+        return any(r.id == self.view_role_id for r in interaction.user.roles)
+
+    @discord.ui.button(label="Favor", style=discord.ButtonStyle.success, custom_id="vote_favor_ended", disabled=True)
+    async def favor_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, custom_id="vote_deny_ended", disabled=True)
+    async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="Neutral", style=discord.ButtonStyle.secondary, custom_id="vote_neutral_ended", disabled=True)
+    async def neutral_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="👁 View Votes", style=discord.ButtonStyle.primary, custom_id="vote_view_votes_ended")
+    async def view_votes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Show detailed vote breakdown. Available even after vote ends."""
+        if not self._check_view_role(interaction):
+            role = interaction.guild.get_role(self.view_role_id)
+            role_name = role.name if role else "the required role"
+            return await interaction.response.send_message(
+                f"❌ You need the **{role_name}** role to view the votes.", ephemeral=True
+            )
+
+        msg = interaction.message
+        vote_id = _msg_to_vote_id.get(msg.id)
+
+        if not vote_id or vote_id not in _votes:
+            return await interaction.response.send_message(
+                "⚠️ Vote data not found. The bot may have restarted — detailed vote data is unavailable.",
+                ephemeral=True,
+            )
+
+        vote_data = _votes[vote_id]
+        votes_dict = vote_data['votes']
+
+        favor_users   = [uid for uid, v in votes_dict.items() if v == "Favor"]
+        deny_users    = [uid for uid, v in votes_dict.items() if v == "Deny"]
+        neutral_users = [uid for uid, v in votes_dict.items() if v == "Neutral"]
+        total = len(votes_dict)
+
+        def fmt_users(uids):
+            if not uids:
+                return "*None*"
+            return "\n".join(f"<@{uid}>" for uid in uids)
+
+        result_embed = discord.Embed(
+            title=f"📊 Vote Details — {vote_id}",
+            color=discord.Color.blurple(),
+            timestamp=discord.utils.utcnow(),
+        )
+        result_embed.add_field(
+            name=f"✅ Favor ({len(favor_users)})",
+            value=fmt_users(favor_users),
+            inline=True,
+        )
+        result_embed.add_field(
+            name=f"❌ Deny ({len(deny_users)})",
+            value=fmt_users(deny_users),
+            inline=True,
+        )
+        result_embed.add_field(
+            name=f"⚪ Neutral ({len(neutral_users)})",
+            value=fmt_users(neutral_users),
+            inline=True,
+        )
+        result_embed.set_footer(text=f"Total votes: {total} • Only visible to you")
+
+        await interaction.response.send_message(embed=result_embed, ephemeral=True)
+
+
+    @app_commands.command(name="getfile", description="[Owner Only] Get the contents of a bot file")
+    @app_commands.describe(filepath="The file path to retrieve (e.g. main.py or commands/admin/admin.py)")
+    async def getfile(self, interaction: discord.Interaction, filepath: str):
+        owner_id = int(os.getenv("BOT_OWNER_ID", 0))
+        if interaction.user.id != owner_id:
+            return await interaction.response.send_message(
+                "❌ Bu komut yalnızca bot sahibi tarafından kullanılabilir.",
+                ephemeral=True
+            )
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Güvenlik: path traversal saldırılarını önle
+        safe_path = os.path.normpath(filepath)
+        if safe_path.startswith(".."):
+            return await interaction.followup.send(
+                "❌ Geçersiz dosya yolu.",
+                ephemeral=True
+            )
+
+        if not os.path.exists(safe_path):
+            return await interaction.followup.send(
+                f"❌ Dosya bulunamadı: `{safe_path}`",
+                ephemeral=True
+            )
+
+        if not os.path.isfile(safe_path):
+            return await interaction.followup.send(
+                f"❌ `{safe_path}` bir dosya değil (dizin olabilir).",
+                ephemeral=True
+            )
+
+        file_size = os.path.getsize(safe_path)
+        max_size = 8 * 1024 * 1024  # 8 MB Discord limiti
+        if file_size > max_size:
+            return await interaction.followup.send(
+                f"❌ Dosya çok büyük ({file_size / 1024 / 1024:.2f} MB). Maksimum boyut 8 MB.",
+                ephemeral=True
+            )
+
+        try:
+            discord_file = discord.File(safe_path, filename=os.path.basename(safe_path))
+            embed = discord.Embed(
+                title="📄 Dosya İçeriği",
+                description=f"`{safe_path}`",
+                color=discord.Color.blurple()
+            )
+            embed.add_field(name="Boyut", value=f"{file_size:,} byte", inline=True)
+            embed.set_footer(text=f"İstekte bulunan: {interaction.user.name}")
+            await interaction.followup.send(embed=embed, file=discord_file, ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Dosya okunurken hata oluştu: `{str(e)}`",
+                ephemeral=True
+            )
+
+
+def _make_ended_view(vote_role_id: int | None = None, view_role_id: int | None = None) -> VoteEndedView:
+    """Return a VoteEndedView where vote buttons are disabled but View Votes remains active."""
+    return VoteEndedView(vote_role_id=vote_role_id, view_role_id=view_role_id)
 
 
 async def _finalize_vote(vote_id: str, bot) -> bool:
@@ -4045,7 +4195,13 @@ async def _finalize_vote(vote_id: str, bot) -> bool:
         else:
             new_embed.add_field(name=field.name, value=field.value, inline=field.inline)
 
-    await msg.edit(embed=new_embed, view=_make_disabled_view())
+    await msg.edit(
+        embed=new_embed,
+        view=_make_ended_view(
+            vote_role_id=vote_data.get('vote_role_id'),
+            view_role_id=vote_data.get('view_role_id'),
+        ),
+    )
     return True
 
 

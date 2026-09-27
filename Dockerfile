@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 # Çalışma dizini
 # Python output'u buffer'lamadan direkt gönder (docker logs için)
